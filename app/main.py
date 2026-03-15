@@ -23,7 +23,28 @@ TOOLS = [
                 "required": ["file_path"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Write",
+            "description": "Write content to a file",
+            "parameters": {
+            "type": "object",
+            "required": ["file_path", "content"],
+            "properties": {
+                "file_path": {
+                "type": "string",
+                "description": "The path of the file to write to",
+                },
+                "content": {
+                "type": "string",
+                "description": "The content to write to the file",
+                },
+            },
+            },
+        },
+        },
 ]
 
 
@@ -42,6 +63,32 @@ def execute_read_tool(raw_arguments: str) -> str:
             return f.read()
     except Exception as e:
         return f"failed to read {file_path}: {e}"
+
+
+def execute_write_tool(raw_arguments: str) -> str:
+    try:
+        tool_args = json.loads(raw_arguments)
+    except json.JSONDecodeError:
+        return f"invalid tool arguments: {raw_arguments}"
+
+    file_path = tool_args.get("file_path")
+    content = tool_args.get("content")
+
+    if not file_path:
+        return "Write requires file_path"
+    if content is None:
+        return "Write requires content"
+
+    parent = os.path.dirname(file_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"wrote to {file_path}"
+    except Exception as e:
+        return f"failed to write {file_path}: {e}"
 
 
 def main():
@@ -76,6 +123,8 @@ def main():
             fn = tool_call.function
             if fn.name == "Read":
                 tool_output = execute_read_tool(fn.arguments)
+            elif fn.name == "Write":
+                tool_output = execute_write_tool(fn.arguments)
             else:
                 tool_output = f"unsupported tool: {fn.name}"
 
