@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 
 from openai import OpenAI
 
@@ -30,21 +31,38 @@ TOOLS = [
             "name": "Write",
             "description": "Write content to a file",
             "parameters": {
-            "type": "object",
-            "required": ["file_path", "content"],
-            "properties": {
-                "file_path": {
-                "type": "string",
-                "description": "The path of the file to write to",
-                },
-                "content": {
-                "type": "string",
-                "description": "The content to write to the file",
+                "type": "object",
+                "required": ["file_path", "content"],
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path of the file to write to",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file",
+                    },
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Bash",
+            "description": "Execute a shell command",
+            "parameters": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute",
+                    }
+                },
             },
         },
-        },
+    },
 ]
 
 
@@ -91,6 +109,39 @@ def execute_write_tool(raw_arguments: str) -> str:
         return f"failed to write {file_path}: {e}"
 
 
+def execute_bash_tool(raw_arguments: str) -> str:
+    try:
+        tool_args = json.loads(raw_arguments)
+    except json.JSONDecodeError:
+        return f"invalid tool arguments: {raw_arguments}"
+
+    command = tool_args.get("command")
+    if not command:
+        return "Bash requires command"
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return f"command timed out: {command}"
+    except Exception as e:
+        return f"failed to run command: {e}"
+
+    output = (result.stdout or "") + (result.stderr or "")
+    if output:
+        return output
+
+    if result.returncode != 0:
+        return f"command failed with exit code {result.returncode}"
+
+    return ""
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("-p", required=True)
@@ -125,6 +176,8 @@ def main():
                 tool_output = execute_read_tool(fn.arguments)
             elif fn.name == "Write":
                 tool_output = execute_write_tool(fn.arguments)
+            elif fn.name == "Bash":
+                tool_output = execute_bash_tool(fn.arguments)
             else:
                 tool_output = f"unsupported tool: {fn.name}"
 
