@@ -2,11 +2,15 @@ import argparse
 import json
 import os
 import subprocess
+from typing import Any
 
 from openai import OpenAI
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
+MODEL_NAME = "anthropic/claude-haiku-4.5"
+BASH_TIMEOUT_SECONDS = 30
+
 TOOLS = [
     {
         "type": "function",
@@ -66,11 +70,23 @@ TOOLS = [
 ]
 
 
-def execute_read_tool(raw_arguments: str) -> str:
+def parse_tool_arguments(raw_arguments: str) -> dict[str, Any]:
     try:
         tool_args = json.loads(raw_arguments)
-    except json.JSONDecodeError as e:
-        return f"invalid tool arguments: {raw_arguments}"
+    except json.JSONDecodeError:
+        raise ValueError(f"invalid tool arguments: {raw_arguments}")
+
+    if not isinstance(tool_args, dict):
+        raise ValueError(f"tool arguments must be an object: {raw_arguments}")
+
+    return tool_args
+
+
+def execute_read_tool(raw_arguments: str) -> str:
+    try:
+        tool_args = parse_tool_arguments(raw_arguments)
+    except ValueError as e:
+        return str(e)
 
     file_path = tool_args.get("file_path")
     if not file_path:
@@ -85,9 +101,9 @@ def execute_read_tool(raw_arguments: str) -> str:
 
 def execute_write_tool(raw_arguments: str) -> str:
     try:
-        tool_args = json.loads(raw_arguments)
-    except json.JSONDecodeError:
-        return f"invalid tool arguments: {raw_arguments}"
+        tool_args = parse_tool_arguments(raw_arguments)
+    except ValueError as e:
+        return str(e)
 
     file_path = tool_args.get("file_path")
     content = tool_args.get("content")
@@ -111,9 +127,9 @@ def execute_write_tool(raw_arguments: str) -> str:
 
 def execute_bash_tool(raw_arguments: str) -> str:
     try:
-        tool_args = json.loads(raw_arguments)
-    except json.JSONDecodeError:
-        return f"invalid tool arguments: {raw_arguments}"
+        tool_args = parse_tool_arguments(raw_arguments)
+    except ValueError as e:
+        return str(e)
 
     command = tool_args.get("command")
     if not command:
@@ -125,7 +141,7 @@ def execute_bash_tool(raw_arguments: str) -> str:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=BASH_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
         return f"command timed out: {command}"
@@ -142,6 +158,16 @@ def execute_bash_tool(raw_arguments: str) -> str:
     return ""
 
 
+def execute_tool_call(tool_name: str, raw_arguments: str) -> str:
+    if tool_name == "Read":
+        return execute_read_tool(raw_arguments)
+    if tool_name == "Write":
+        return execute_write_tool(raw_arguments)
+    if tool_name == "Bash":
+        return execute_bash_tool(raw_arguments)
+    return f"unsupported tool: {tool_name}"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("-p", required=True)
@@ -155,7 +181,7 @@ def main():
 
     while True:
         chat = client.chat.completions.create(
-            model="anthropic/claude-haiku-4.5",
+            model=MODEL_NAME,
             messages=messages,
             tools=TOOLS,
         )
@@ -172,14 +198,7 @@ def main():
 
         for tool_call in message.tool_calls:
             fn = tool_call.function
-            if fn.name == "Read":
-                tool_output = execute_read_tool(fn.arguments)
-            elif fn.name == "Write":
-                tool_output = execute_write_tool(fn.arguments)
-            elif fn.name == "Bash":
-                tool_output = execute_bash_tool(fn.arguments)
-            else:
-                tool_output = f"unsupported tool: {fn.name}"
+            tool_output = execute_tool_call(fn.name, fn.arguments)
 
             messages.append(
                 {
